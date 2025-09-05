@@ -1,0 +1,35 @@
+{
+  "name": "ada-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "jarvis": "dist/chat.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rimraf dist || rm -rf dist",
+    "dev": "tsx watch src/chat.ts",
+    "chat": "node dist/chat.js chat",
+            "mcp": "node dist/google-mcp-server.js"
+  },
+  "dependencies": {
+    "@google-cloud/local-auth": "^3.0.1",
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.1",
+    "googleapis": "^158.0.0",
+    "openai": "^5.16.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "rimraf": "^6.0.1",
+    "tslib": "^2.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}
