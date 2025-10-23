@@ -10,7 +10,8 @@ import * as readline from "readline";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const SERVER_PATH = path.join(__dirname, "google-mcp-server.js");
+const GOOGLE_SERVER_PATH = path.join(__dirname, "google-mcp-server.js");
+const ORDERING_SERVER_PATH = path.join(__dirname, "ordering-mcp-server.js");
 
 // ---- OpenAI tools spec (unchanged) -----------------------------------------
 const tools = [
@@ -163,39 +164,105 @@ const tools = [
       },
     },
   },
+  // ---- Ordering MCP Server Tools --------------------------------------------
+  {
+    type: "function",
+    function: {
+      name: "order_food_item",
+      description: "Add a food item to your order from the restaurant menu",
+      parameters: {
+        type: "object",
+        properties: {
+          itemName: { type: "string", description: "Name of the food item to order (e.g., 'bacon sandwich', 'coffee')" },
+          quantity: { type: "number", description: "Quantity to order (default: 1)" },
+          customizations: { type: "object", description: "Item customizations (e.g., {'size': 'large', 'milk': 'oat'})" }
+        },
+        required: ["itemName"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browse_menu",
+      description: "Browse the restaurant menu to see available items",
+      parameters: {
+        type: "object",
+        properties: {
+          category: { type: "string", description: "Filter by category (e.g., 'breakfast', 'lunch', 'beverages')" },
+          search: { type: "string", description: "Search for specific items" }
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cart",
+      description: "View current items in your cart",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_cart",
+      description: "Remove all items from your cart",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "checkout",
+      description: "Complete your order and proceed to payment",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
 ] as const satisfies OpenAI.Chat.Completions.ChatCompletionTool[];
 
 // ---- OpenAI client/model ----------------------------------------------------
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ---- MCP wiring: use the ONE-ARG constructor -------------------------------
-async function connectMcpServer(): Promise<{ client: Client }> {
-  console.log("🔗 Connecting to MCP server...");
-  console.log("📁 Server path:", SERVER_PATH);
-  console.log("📁 Working directory:", path.resolve(__dirname, ".."));
+// ---- MCP wiring: connect to both servers -------------------------------
+async function connectMcpServers(): Promise<{ googleClient: Client; orderingClient: Client }> {
+  console.log("🔗 Connecting to MCP servers...");
   
-  const transport = new StdioClientTransport({
-    // Use the current Node executable
+  // Connect to Google MCP server
+  console.log("📁 Google server path:", GOOGLE_SERVER_PATH);
+  const googleTransport = new StdioClientTransport({
     command: process.execPath,
-    // Point to your built MCP server entry
-    args: [SERVER_PATH],
-    // Show server stderr in your terminal (or set to "pipe" to capture)
+    args: [GOOGLE_SERVER_PATH],
     stderr: "inherit",
     cwd: path.resolve(__dirname, ".."),
   });
 
-  // Connect the MCP client over this transport
-  const client = new Client({ name: "ada-chat", version: "0.1.0" });
-  await client.connect(transport);
-  console.log("✅ MCP client connected successfully");
+  const googleClient = new Client({ name: "ada-chat-google", version: "0.1.0" });
+  await googleClient.connect(googleTransport);
+  console.log("✅ Google MCP client connected successfully");
 
-  return { client };
+  // Connect to Ordering MCP server
+  console.log("📁 Ordering server path:", ORDERING_SERVER_PATH);
+  const orderingTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [ORDERING_SERVER_PATH],
+    stderr: "inherit",
+    cwd: path.resolve(__dirname, ".."),
+  });
+
+  const orderingClient = new Client({ name: "ada-chat-ordering", version: "0.1.0" });
+  await orderingClient.connect(orderingTransport);
+  console.log("✅ Ordering MCP client connected successfully");
+
+  return { googleClient, orderingClient };
 }
 
 // ---- Chat loop --------------------------------------------------------------
 async function chatLoop() {
-  const { client } = await connectMcpServer();
+  const { googleClient, orderingClient } = await connectMcpServers();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   // Get current date and time in America/Los_Angeles timezone
@@ -218,7 +285,14 @@ async function chatLoop() {
     {
       role: "system",
       content:
-        `You are a helpful scheduling assistant named Ada. The current date and time is: ${currentDate} at ${currentTime} (America/Los_Angeles timezone). Default to America/Los_Angeles unless the user specifies otherwise. On bootup, inform the user of your capabilities and the current date/time. Always use the current date/time provided above when scheduling events or answering date-related questions.
+        `You are a helpful assistant named Ada that can help with both Google Calendar/Gmail tasks and restaurant ordering. The current date and time is: ${currentDate} at ${currentTime} (America/Los_Angeles timezone). Default to America/Los_Angeles unless the user specifies otherwise. On bootup, inform the user of your capabilities and the current date/time. Always use the current date/time provided above when scheduling events or answering date-related questions.
+
+Your capabilities include:
+- Google Calendar: Create events, list events, manage calendars
+- Gmail: Send emails, search emails, read emails  
+- Restaurant Ordering: Browse menu, order food items, manage cart, checkout
+
+Always use the current date/time provided above when scheduling events or answering date-related questions.
 
 YOUR CAPABILITIES:
 - List available calendars
@@ -282,6 +356,10 @@ GMAIL CAPABILITIES:
           
           console.log(`🔧 Calling tool: ${name} with args:`, args);
 
+          // Route tool calls to the appropriate MCP server
+          const isOrderingTool = ['order_food_item', 'browse_menu', 'get_cart', 'clear_cart', 'checkout'].includes(name);
+          const client = isOrderingTool ? orderingClient : googleClient;
+          
           const result = await client.callTool({ name, arguments: args });
           console.log(`✅ Tool result:`, result);
 
