@@ -1,4 +1,5 @@
 # Google Workspace MCP Server
+**Owner:** David Pak
 
 A Model Context Protocol (MCP) server that provides AI assistants with access to Google Calendar and Gmail APIs. This server enables AI assistants like Ada to manage your calendar events and email seamlessly.
 
